@@ -1,24 +1,11 @@
-#include "filemanager.h"
+#include "fileio.h"
+#include "core/utils/pathutils.h"
 #include <QDir>
 #include <QFile>
 
 namespace {
 constexpr qint64 kBinarySniffBytes = 8192;
 constexpr qint64 kMaxEditableTextFileBytes = 1024 * 1024;
-
-Qt::CaseSensitivity pathCaseSensitivity()
-{
-#ifdef Q_OS_WIN
-    return Qt::CaseInsensitive;
-#else
-    return Qt::CaseSensitive;
-#endif
-}
-
-QString normalizedPath(const QString &path)
-{
-    return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-}
 
 bool hasBinarySignature(const QByteArray &sample)
 {
@@ -41,23 +28,6 @@ bool hasBinarySignature(const QByteArray &sample)
     }
 
     return suspiciousControlBytes * 20 > sample.size();
-}
-
-bool isSamePath(const QString &left, const QString &right)
-{
-    return QString::compare(normalizedPath(left), normalizedPath(right), pathCaseSensitivity()) == 0;
-}
-
-bool isSameOrChildPath(const QString &candidatePath, const QString &rootPath)
-{
-    const QString candidate = normalizedPath(candidatePath);
-    const QString root = normalizedPath(rootPath);
-
-    if (isSamePath(candidate, root)) {
-        return true;
-    }
-
-    return candidate.startsWith(root + QDir::separator(), pathCaseSensitivity());
 }
 
 QString copyCandidateName(const QFileInfo &sourceInfo, int attempt)
@@ -120,7 +90,7 @@ bool copyDirectoryRecursively(const QString &sourceDirPath, const QString &targe
 }
 }
 
-bool FileManager::createFile(const QString &dirPath, const QString &fileName)
+bool FileIO::createFile(const QString &dirPath, const QString &fileName)
 {
     QFile file(QDir(dirPath).filePath(fileName));
     if (file.open(QIODevice::WriteOnly)) {
@@ -130,18 +100,18 @@ bool FileManager::createFile(const QString &dirPath, const QString &fileName)
     return false;
 }
 
-bool FileManager::createFolder(const QString &dirPath, const QString &folderName)
+bool FileIO::createFolder(const QString &dirPath, const QString &folderName)
 {
     return QDir(dirPath).mkdir(folderName);
 }
 
-bool FileManager::rename(const QString &oldPath, const QString &newName)
+bool FileIO::rename(const QString &oldPath, const QString &newName)
 {
     QString newPath = QDir(QFileInfo(oldPath).absolutePath()).filePath(newName);
     return QFile::rename(oldPath, newPath);
 }
 
-bool FileManager::remove(const QString &path)
+bool FileIO::remove(const QString &path)
 {
     QFileInfo info(path);
     if (info.isDir()) {
@@ -151,7 +121,7 @@ bool FileManager::remove(const QString &path)
     }
 }
 
-bool FileManager::readFileContent(const QString &filePath, QString &outContent)
+bool FileIO::readFileContent(const QString &filePath, QString &outContent)
 {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -162,7 +132,7 @@ bool FileManager::readFileContent(const QString &filePath, QString &outContent)
     return true;
 }
 
-bool FileManager::writeFileContent(const QString &filePath, const QString &content)
+bool FileIO::writeFileContent(const QString &filePath, const QString &content)
 {
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
@@ -174,7 +144,7 @@ bool FileManager::writeFileContent(const QString &filePath, const QString &conte
     return true;
 }
 
-bool FileManager::copyPath(const QString &sourcePath, const QString &targetDirPath, QString *outCopiedPath)
+bool FileIO::copyPath(const QString &sourcePath, const QString &targetDirPath, QString *outCopiedPath)
 {
     const QFileInfo sourceInfo(sourcePath);
     const QFileInfo targetDirInfo(targetDirPath);
@@ -183,7 +153,7 @@ bool FileManager::copyPath(const QString &sourcePath, const QString &targetDirPa
         return false;
     }
 
-    if (sourceInfo.isDir() && isSameOrChildPath(targetDirPath, sourcePath)) {
+    if (sourceInfo.isDir() && PathUtils::isSameOrChildPath(targetDirPath, sourcePath)) {
         return false;
     }
 
@@ -206,7 +176,7 @@ bool FileManager::copyPath(const QString &sourcePath, const QString &targetDirPa
     return true;
 }
 
-bool FileManager::movePath(const QString &sourcePath, const QString &targetDirPath, QString *outMovedPath)
+bool FileIO::movePath(const QString &sourcePath, const QString &targetDirPath, QString *outMovedPath)
 {
     const QFileInfo sourceInfo(sourcePath);
     const QFileInfo targetDirInfo(targetDirPath);
@@ -215,12 +185,12 @@ bool FileManager::movePath(const QString &sourcePath, const QString &targetDirPa
         return false;
     }
 
-    if (sourceInfo.isDir() && isSameOrChildPath(targetDirPath, sourcePath)) {
+    if (sourceInfo.isDir() && PathUtils::isSameOrChildPath(targetDirPath, sourcePath)) {
         return false;
     }
 
     const QString sourceParentPath = sourceInfo.absolutePath();
-    if (isSamePath(sourceParentPath, targetDirPath)) {
+    if (PathUtils::isSamePath(sourceParentPath, targetDirPath)) {
         return false;
     }
 
@@ -250,7 +220,7 @@ bool FileManager::movePath(const QString &sourcePath, const QString &targetDirPa
     return true;
 }
 
-bool FileManager::isBinaryFile(const QString &filePath)
+bool FileIO::isBinaryFile(const QString &filePath)
 {
     QString suffix = QFileInfo(filePath).suffix().toLower();
     if (binaryExtensions().contains(suffix)) {
@@ -267,17 +237,17 @@ bool FileManager::isBinaryFile(const QString &filePath)
     return hasBinarySignature(sample);
 }
 
-bool FileManager::isTextFileTooLarge(const QString &filePath)
+bool FileIO::isTextFileTooLarge(const QString &filePath)
 {
     return QFileInfo(filePath).size() > maxEditableTextFileBytes();
 }
 
-qint64 FileManager::maxEditableTextFileBytes()
+qint64 FileIO::maxEditableTextFileBytes() const
 {
     return kMaxEditableTextFileBytes;
 }
 
-QStringList FileManager::binaryExtensions()
+QStringList FileIO::binaryExtensions() const
 {
     return {
         // Ảnh

@@ -1,4 +1,5 @@
 #include "projecttreeview.h"
+#include "core/utils/pathutils.h"
 #include <QDropEvent>
 #include <QDragEnterEvent>
 #include <QDir>
@@ -10,37 +11,6 @@
 #include <QUrl>
 
 namespace {
-Qt::CaseSensitivity pathCaseSensitivity()
-{
-#ifdef Q_OS_WIN
-    return Qt::CaseInsensitive;
-#else
-    return Qt::CaseSensitive;
-#endif
-}
-
-QString cleanPath(const QString &path)
-{
-    return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-}
-
-bool isSamePath(const QString &left, const QString &right)
-{
-    return QString::compare(cleanPath(left), cleanPath(right), pathCaseSensitivity()) == 0;
-}
-
-bool isSameOrChildPath(const QString &candidatePath, const QString &rootPath)
-{
-    const QString candidate = cleanPath(candidatePath);
-    const QString root = cleanPath(rootPath);
-
-    if (isSamePath(candidate, root)) {
-        return true;
-    }
-
-    return candidate.startsWith(root + QDir::separator(), pathCaseSensitivity());
-}
-
 class ProjectTreeItemDelegate : public QStyledItemDelegate
 {
 public:
@@ -97,7 +67,7 @@ void ProjectTreeView::setProjectRootPath(const QString &path)
 
 void ProjectTreeView::setCutPath(const QString &path)
 {
-    const QString normalized = cleanPath(path);
+    const QString normalized = PathUtils::cleanPath(path);
     if (cutPath == normalized) {
         return;
     }
@@ -197,5 +167,5 @@ bool ProjectTreeView::canAcceptDrop(const QMimeData *mimeData, const QPoint &pos
 
 bool ProjectTreeView::isPathAffectedByCut(const QString &path) const
 {
-    return !cutPath.isEmpty() && !path.isEmpty() && isSameOrChildPath(path, cutPath);
+    return !cutPath.isEmpty() && !path.isEmpty() && PathUtils::isSameOrChildPath(path, cutPath);
 }

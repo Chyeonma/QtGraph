@@ -2,141 +2,35 @@
 #include "editor/view/codeviewer.h"
 #include "ui/canvas/canvasview.h"
 #include "ui/welcome/welcometab.h"
-#include "core/filemanager.h"
-#include "core/fonts/fontmanager.h"
-#include "editor/syntax/highlighterfactory.h"
-#include "settings/settingstab.h"
-#include "settings/settingsmanager.h"
-#include <algorithm>
+#include "services/fileservice.h"
+#include "services/editorservice.h"
+#include "interfaces/ifontprovider.h"
+#include "core/utils/pathutils.h"
+#include "interfaces/ihighlighterfactory.h"
+#include "ui/settings/settingstab.h"
+#include "services/settingsservice.h"
+#include "app/appcontext.h"
 #include <QFile>
-#include <QFileSystemWatcher>
 #include <QFileInfo>
-#include <QDir>
 #include <QMenu>
 #include <QMessageBox>
-#include <QLocale>
 #include <QPushButton>
 #include <QTabBar>
+#include <algorithm>
 
 const QString TabManager::CANVAS_MARKER = "##canvas##";
 const QString TabManager::SETTINGS_MARKER = "##settings##";
 const QString TabManager::WELCOME_MARKER = "##welcome##";
 
-namespace {
-Qt::CaseSensitivity pathCaseSensitivity()
-{
-#ifdef Q_OS_WIN
-    return Qt::CaseInsensitive;
-#else
-    return Qt::CaseSensitive;
-#endif
-}
-
-QString cleanPath(const QString &path)
-{
-    return QDir::cleanPath(path);
-}
-
-bool isSamePath(const QString &left, const QString &right)
-{
-    return QString::compare(cleanPath(left), cleanPath(right), pathCaseSensitivity()) == 0;
-}
-
-bool isSameOrChildPath(const QString &candidatePath, const QString &rootPath)
-{
-    const QString candidate = cleanPath(candidatePath);
-    const QString root = cleanPath(rootPath);
-
-    if (isSamePath(candidate, root)) {
-        return true;
-    }
-
-    return candidate.startsWith(root + QDir::separator(), pathCaseSensitivity());
-}
-
-QString remapPathAfterRename(const QString &originalPath, const QString &oldRootPath, const QString &newRootPath)
-{
-    const QString original = cleanPath(originalPath);
-    const QString oldRoot = cleanPath(oldRootPath);
-    const QString newRoot = cleanPath(newRootPath);
-
-    if (isSamePath(original, oldRoot)) {
-        return newRoot;
-    }
-
-    return cleanPath(newRoot + original.mid(oldRoot.size()));
-}
-
-QString unsupportedPreviewMessage(const QString &filePath, const QString &fileName)
-{
-    const QString suffix = QFileInfo(filePath).suffix().toLower();
-    return
-        "This file preview is not supported.\n\n"
-        "File: " + fileName + "\n"
-        "Path: " + filePath + "\n"
-        "Extension: ." + suffix + "\n\n"
-        "The tab is still opened so you can keep track of the file inside the project, "
-        "but its content cannot be rendered as plain text.";
-}
-
-QString largeTextFileMessage(const QString &filePath, const QString &fileName)
-{
-    const QFileInfo fileInfo(filePath);
-    const QString fileSize = QLocale().formattedDataSize(fileInfo.size());
-    const QString maxSize = QLocale().formattedDataSize(FileManager::maxEditableTextFileBytes());
-
-    return
-        "This text file is too large to open in the built-in editor.\n\n"
-        "File: " + fileName + "\n"
-        "Path: " + filePath + "\n"
-        "Size: " + fileSize + "\n"
-        "Editor limit: " + maxSize + "\n\n"
-        "The tab stays open so you know the file exists, but the app skips loading its full content "
-        "to keep the interface responsive.";
-}
-
-bool shouldOpenLargeTextFile(QWidget *parent, const QString &filePath, const QString &fileName, bool &useSafePreview)
-{
-    const QFileInfo fileInfo(filePath);
-    const QString fileSize = QLocale().formattedDataSize(fileInfo.size());
-    const QString maxSize = QLocale().formattedDataSize(FileManager::maxEditableTextFileBytes());
-
-    QMessageBox messageBox(parent);
-    messageBox.setIcon(QMessageBox::Warning);
-    messageBox.setWindowTitle("Large Text File");
-    messageBox.setText("This file is larger than the editor's recommended limit.");
-    messageBox.setInformativeText(
-        "File: " + fileName + "\n"
-        "Size: " + fileSize + "\n"
-        "Recommended limit: " + maxSize + "\n\n"
-        "You can still open it, but the app may become slower while rendering or editing the content."
-    );
-
-    QPushButton *openAnywayButton = messageBox.addButton("Open Anyway", QMessageBox::AcceptRole);
-    QPushButton *safePreviewButton = messageBox.addButton("Open Safe Preview", QMessageBox::ActionRole);
-    messageBox.addButton(QMessageBox::Cancel);
-    messageBox.setDefaultButton(safePreviewButton);
-    messageBox.exec();
-
-    if (messageBox.clickedButton() == openAnywayButton) {
-        useSafePreview = false;
-        return true;
-    }
-
-    if (messageBox.clickedButton() == safePreviewButton) {
-        useSafePreview = true;
-        return true;
-    }
-
-    return false;
-}
-}
-
-TabManager::TabManager(QTabWidget *tabWidget, SettingsManager *settingsManager, QObject *parent)
+TabManager::TabManager(QTabWidget *tabWidget, AppContext *context, QObject *parent)
     : QObject(parent)
     , tabWidget(tabWidget)
-    , settingsManager(settingsManager)
-    , fileWatcher(new QFileSystemWatcher(this))
+    , appContext(context)
+    , fileService(context->fileService())
+    , editorService(context->editorService())
+    , fontProvider(context->fontProvider())
+    , highlighterFactory(context->highlighterFactory())
+    , settingsService(context->settingsService())
     , canvasView(nullptr)
     , settingsTab(nullptr)
     , welcomeTab(nullptr)
@@ -154,11 +48,35 @@ TabManager::TabManager(QTabWidget *tabWidget, SettingsManager *settingsManager, 
     connect(tabWidget, &QTabWidget::tabCloseRequested, this, &TabManager::closeTab);
     tabWidget->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tabWidget->tabBar(), &QWidget::customContextMenuRequested, this, &TabManager::onTabContextMenuRequested);
-    connect(settingsManager, &SettingsManager::settingsChanged, this, [this]() {
+    connect(settingsService, &SettingsService::settingsChanged, this, [this]() {
         applyEditorFontToOpenTabs();
     });
-    connect(fileWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString &filePath) {
-        handleWatchedFileChanged(filePath);
+
+    // Handle external file changes securely managed by EditorService
+    connect(editorService, &EditorService::externalFileChanged, this, [this](const QString &filePath) {
+        const int tabIndex = findTabByPath(filePath);
+        if (tabIndex == -1) return;
+
+        CodeViewer *viewer = qobject_cast<CodeViewer*>(this->tabWidget->widget(tabIndex));
+        if (!viewer || !viewer->editableContent()) return;
+
+        this->tabWidget->setCurrentIndex(tabIndex);
+
+        QMessageBox messageBox(this->tabWidget);
+        messageBox.setIcon(QMessageBox::Warning);
+        messageBox.setWindowTitle("External File Change");
+        messageBox.setText("File \"" + viewer->displayName() + "\" was modified outside the app.");
+        messageBox.setInformativeText("Choose reload to use the external change, or keep your current editing buffer and ignore that external change.");
+
+        QPushButton *keepEditingButton = messageBox.addButton("Keep My Changes", QMessageBox::RejectRole);
+        QPushButton *reloadButton = messageBox.addButton("Reload From Disk", QMessageBox::AcceptRole);
+        messageBox.exec();
+
+        if (messageBox.clickedButton() == reloadButton) {
+            reloadViewerFromDisk(viewer);
+        } else if (messageBox.clickedButton() == keepEditingButton) {
+            this->editorService->watchFilePath(filePath);
+        }
     });
 }
 
@@ -171,33 +89,20 @@ void TabManager::openFile(const QString &filePath, const QString &fileName)
         return;
     }
 
-    QString content;
-    const bool binaryContent = FileManager::isBinaryFile(filePath);
-    const bool oversizedTextContent = !binaryContent && FileManager::isTextFileTooLarge(filePath);
-    bool useSafePreview = oversizedTextContent;
-
-    if (oversizedTextContent && !shouldOpenLargeTextFile(tabWidget, filePath, fileName, useSafePreview)) {
-        return;
-    }
-
-    const bool supportedContent = !binaryContent && !useSafePreview;
-
-    if (supportedContent && !FileManager::readFileContent(filePath, content)) {
+    OpenFileResult result = editorService->prepareFile(filePath, fileName, true);
+    
+    if (result.status == OpenFileResult::ReadError) {
         QMessageBox::warning(nullptr, "Lỗi", "Không thể mở file: " + fileName);
         return;
     }
 
-    if (binaryContent) {
-        content = unsupportedPreviewMessage(filePath, fileName);
-    } else if (useSafePreview) {
-        content = largeTextFileMessage(filePath, fileName);
-    }
+    QString contentToLoad = result.editable ? result.content : result.previewMessage;
 
-    CodeViewer *editor = createTextViewer(content, filePath, fileName, supportedContent);
+    CodeViewer *editor = createTextViewer(contentToLoad, filePath, fileName, result.editable);
 
     // Gắn syntax highlighter (nếu hỗ trợ ngôn ngữ)
-    if (supportedContent) {
-        HighlighterFactory::createForFile(filePath, editor->document());
+    if (result.editable) {
+        highlighterFactory->createForFile(filePath, editor->document());
     }
 
     int tabIndex = tabWidget->addTab(editor, fileName);
@@ -208,8 +113,8 @@ void TabManager::openFile(const QString &filePath, const QString &fileName)
         updateTabTitle(editor);
     });
 
-    if (supportedContent) {
-        watchFilePath(filePath);
+    if (result.editable) {
+        editorService->watchFilePath(filePath);
     }
 }
 
@@ -322,7 +227,7 @@ SettingsTab* TabManager::openSettings()
         }
     }
 
-    settingsTab = new SettingsTab(settingsManager);
+    settingsTab = new SettingsTab(fontProvider, settingsService);
     int tabIndex = tabWidget->addTab(settingsTab, "Setting");
     tabWidget->setTabToolTip(tabIndex, SETTINGS_MARKER);
     tabWidget->setCurrentIndex(tabIndex);
@@ -373,18 +278,13 @@ void TabManager::handlePathRenamed(const QString &oldPath, const QString &newPat
         }
 
         const QString oldViewerPath = viewer->filePath();
-        const QString remappedPath = remapPathAfterRename(oldViewerPath, oldPath, newPath);
+        const QString remappedPath = PathUtils::remapPathAfterRename(oldViewerPath, oldPath, newPath);
 
-        unwatchFilePath(oldViewerPath);
-        internalChangePaths.remove(oldViewerPath);
+        editorService->renameWatchedPath(oldViewerPath, remappedPath);
 
         viewer->updateFileContext(remappedPath, QFileInfo(remappedPath).fileName());
         tabWidget->setTabToolTip(index, remappedPath);
         updateTabTitle(viewer);
-
-        if (viewer->editableContent()) {
-            watchFilePath(remappedPath);
-        }
     }
 }
 
@@ -431,8 +331,7 @@ void TabManager::handlePathRemoved(const QString &path)
         CodeViewer *viewer = qobject_cast<CodeViewer*>(widget);
 
         if (viewer) {
-            unwatchFilePath(viewer->filePath());
-            internalChangePaths.remove(viewer->filePath());
+            editorService->unwatchFilePath(viewer->filePath());
         }
 
         tabWidget->removeTab(index);
@@ -450,8 +349,7 @@ void TabManager::closeTab(int index)
     CodeViewer *viewer = qobject_cast<CodeViewer*>(widget);
 
     if (viewer && viewer->editableContent()) {
-        unwatchFilePath(viewer->filePath());
-        internalChangePaths.remove(viewer->filePath());
+        editorService->unwatchFilePath(viewer->filePath());
     }
 
     if (tabWidget->tabToolTip(index) == CANVAS_MARKER) {
@@ -468,8 +366,8 @@ void TabManager::closeTab(int index)
 
 void TabManager::applyEditorFontToOpenTabs()
 {
-    const AppSettings &currentSettings = settingsManager->settings();
-    const QFont editorFont = FontManager::editorFont(currentSettings.editorFontFamily, currentSettings.editorFontSize);
+    const AppSettings &currentSettings = settingsService->settings();
+    const QFont editorFont = fontProvider->editorFont(currentSettings.editorFontFamily, currentSettings.editorFontSize);
 
     for (int i = 0; i < tabWidget->count(); ++i) {
         if (CodeViewer *editor = qobject_cast<CodeViewer*>(tabWidget->widget(i))) {
@@ -484,14 +382,14 @@ CodeViewer* TabManager::createTextViewer(const QString &content, const QString &
     viewer->configureFileContext(filePath, fileName, supportedContent);
     viewer->setPlainText(content);
 
-    const AppSettings &currentSettings = settingsManager->settings();
-    viewer->setFont(FontManager::editorFont(currentSettings.editorFontFamily, currentSettings.editorFontSize));
+    const AppSettings &currentSettings = settingsService->settings();
+    viewer->setFont(fontProvider->editorFont(currentSettings.editorFontFamily, currentSettings.editorFontSize));
     viewer->setStyleSheet(
         "QPlainTextEdit { background: #1e1e1e; color: #d4d4d4; "
         "border: none; padding: 8px; }"
     );
     viewer->setLineWrapMode(QPlainTextEdit::NoWrap);
-    viewer->setLineNumbersVisible(settingsManager->settings().defaultShowLineNumbers);
+    viewer->setLineNumbersVisible(settingsService->settings().defaultShowLineNumbers);
     viewer->document()->setModified(false);
     return viewer;
 }
@@ -528,16 +426,15 @@ bool TabManager::saveViewer(CodeViewer *viewer)
         return true;
     }
 
-    internalChangePaths.insert(viewer->filePath());
-    if (!FileManager::writeFileContent(viewer->filePath(), viewer->toPlainText())) {
-        internalChangePaths.remove(viewer->filePath());
+    bool externalConflict = false;
+    if (!editorService->saveFile(viewer->filePath(), viewer->toPlainText(), externalConflict)) {
         QMessageBox::warning(tabWidget, "Lỗi", "Không thể lưu file:\n" + viewer->filePath());
         return false;
     }
 
     viewer->document()->setModified(false);
     updateTabTitle(viewer);
-    watchFilePath(viewer->filePath());
+    editorService->watchFilePath(viewer->filePath());
     return true;
 }
 
@@ -566,78 +463,23 @@ bool TabManager::maybeSaveTab(int index)
     return true;
 }
 
-void TabManager::watchFilePath(const QString &filePath)
-{
-    if (filePath.isEmpty()) {
-        return;
-    }
-
-    if (!fileWatcher->files().contains(filePath) && QFile::exists(filePath)) {
-        fileWatcher->addPath(filePath);
-    }
-}
-
-void TabManager::unwatchFilePath(const QString &filePath)
-{
-    if (fileWatcher->files().contains(filePath)) {
-        fileWatcher->removePath(filePath);
-    }
-}
-
-void TabManager::handleWatchedFileChanged(const QString &filePath)
-{
-    watchFilePath(filePath);
-
-    if (internalChangePaths.contains(filePath)) {
-        internalChangePaths.remove(filePath);
-        return;
-    }
-
-    const int tabIndex = findTabByPath(filePath);
-    if (tabIndex == -1) {
-        return;
-    }
-
-    CodeViewer *viewer = qobject_cast<CodeViewer*>(tabWidget->widget(tabIndex));
-    if (!viewer || !viewer->editableContent()) {
-        return;
-    }
-
-    tabWidget->setCurrentIndex(tabIndex);
-
-    QMessageBox messageBox(tabWidget);
-    messageBox.setIcon(QMessageBox::Warning);
-    messageBox.setWindowTitle("External File Change");
-    messageBox.setText("File \"" + viewer->displayName() + "\" was modified outside the app.");
-    messageBox.setInformativeText("Choose reload to use the external change, or keep your current editing buffer and ignore that external change.");
-
-    QPushButton *keepEditingButton = messageBox.addButton("Keep My Changes", QMessageBox::RejectRole);
-    QPushButton *reloadButton = messageBox.addButton("Reload From Disk", QMessageBox::AcceptRole);
-    messageBox.exec();
-
-    if (messageBox.clickedButton() == reloadButton) {
-        reloadViewerFromDisk(viewer);
-    } else if (messageBox.clickedButton() == keepEditingButton) {
-        watchFilePath(filePath);
-    }
-}
-
 bool TabManager::reloadViewerFromDisk(CodeViewer *viewer)
 {
     if (!viewer) {
         return false;
     }
 
-    QString content;
-    if (!FileManager::readFileContent(viewer->filePath(), content)) {
+    OpenFileResult result = editorService->prepareFile(viewer->filePath(), viewer->displayName(), false);
+    
+    if (result.status != OpenFileResult::Ok) {
         QMessageBox::warning(tabWidget, "Lỗi", "Không thể tải lại file từ đĩa:\n" + viewer->filePath());
         return false;
     }
 
-    viewer->setPlainText(content);
+    viewer->setPlainText(result.content);
     viewer->document()->setModified(false);
     updateTabTitle(viewer);
-    watchFilePath(viewer->filePath());
+    editorService->watchFilePath(viewer->filePath());
     return true;
 }
 
@@ -647,7 +489,7 @@ QList<int> TabManager::affectedFileTabIndexes(const QString &path) const
 
     for (int i = 0; i < tabWidget->count(); ++i) {
         CodeViewer *viewer = qobject_cast<CodeViewer*>(tabWidget->widget(i));
-        if (viewer && isSameOrChildPath(viewer->filePath(), path)) {
+        if (viewer && PathUtils::isSameOrChildPath(viewer->filePath(), path)) {
             indexes.append(i);
         }
     }

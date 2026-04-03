@@ -6,20 +6,24 @@
 #include <QPlainTextEdit>
 #include <QSet>
 
+class IFontProvider;
+class IHighlighterFactory;
 class CanvasView;
 class WelcomeTab;
-class SettingsManager;
 class SettingsTab;
 class CodeViewer;
-class QFileSystemWatcher;
 class QWidget;
+class AppContext;
+class FileService;
+class EditorService;
+class SettingsService;
 
 class TabManager : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit TabManager(QTabWidget *tabWidget, SettingsManager *settingsManager, QObject *parent = nullptr);
+    explicit TabManager(QTabWidget *tabWidget, AppContext *context, QObject *parent = nullptr);
 
     // Mở file trong tab mới (hoặc focus tab đã mở)
     void openFile(const QString &filePath, const QString &fileName);
@@ -57,14 +61,17 @@ public slots:
 
 private:
     QTabWidget *tabWidget;
-    SettingsManager *settingsManager;
-    QFileSystemWatcher *fileWatcher;
+    AppContext *appContext;
+    FileService *fileService;
+    EditorService *editorService;
+    IFontProvider *fontProvider;
+    IHighlighterFactory *highlighterFactory;
+    SettingsService *settingsService;
 
     // Con trỏ đến tab Canvas (nullptr nếu chưa mở)
     CanvasView *canvasView;
     SettingsTab *settingsTab;
     WelcomeTab *welcomeTab;
-    QSet<QString> internalChangePaths;
 
     static const QString CANVAS_MARKER;
     static const QString SETTINGS_MARKER;
@@ -76,9 +83,6 @@ private:
     void updateTabTitle(CodeViewer *viewer);
     bool saveViewer(CodeViewer *viewer);
     bool maybeSaveTab(int index);
-    void watchFilePath(const QString &filePath);
-    void unwatchFilePath(const QString &filePath);
-    void handleWatchedFileChanged(const QString &filePath);
     bool reloadViewerFromDisk(CodeViewer *viewer);
     QList<int> affectedFileTabIndexes(const QString &path) const;
 };

@@ -1,6 +1,46 @@
+# Build output
 build/
 dist/
-.codex
+
+# Qt Creator / IDE
 CMakeLists.txt.user
-src/ui/mainwindow/*.autosave.ui
+CMakeLists.txt.user.*
+*.autosave
+*.autosave.ui
+.qmake.stash
+*.pro.user
+*.pro.user.*
+
+# Compiled objects
+*.o
+*.obj
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qm
+
+# Binaries
+QtGraph
+*.so
+*.dll
+*.dylib
+*.exe
+*.app
+
+# OS junk
+.DS_Store
+Thumbs.db
+*~
+
+# Settings data (user-specific runtime config)
 settings/data/*.json
+
+# Codex / AI
+.codex
+
+# Plugins (built artifacts, not source)
+plugins/*.so
+plugins/*.dll
+plugins/*.dylib

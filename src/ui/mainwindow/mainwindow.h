@@ -12,16 +12,22 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+class AppContext;
 class TabManager;
-class SettingsManager;
 class ProjectTreeView;
+class ProjectService;
+class FileService;
+class EditorService;
+class IFontProvider;
+class IHighlighterFactory;
+class SettingsService;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit MainWindow(SettingsManager *settingsManager, QWidget *parent = nullptr);
+    explicit MainWindow(AppContext *context, QWidget *parent = nullptr);
     ~MainWindow();
 
 protected:
@@ -44,22 +50,18 @@ private slots:
     void onCustomContextMenuRequested(const QPoint &pos);
     void onTreePathsDropped(const QStringList &sourcePaths, const QString &targetDirPath, Qt::DropAction dropAction);
     void applyUiSettings();
-
 private:
-    enum class TreeClipboardMode {
-        None,
-        Copy,
-        Cut
-    };
-
     Ui::MainWindow *ui;
     QFileSystemModel *fileModel;
+    AppContext *appContext;
+    ProjectService *projectService;
+    FileService *fileService;
+    EditorService *editorService;
+    IFontProvider *fontProvider;
+    IHighlighterFactory *highlighterFactory;
+    SettingsService *settingsService;
     TabManager *tabManager;
-    SettingsManager *settingsManager;
-    QString treeClipboardPath;
-    TreeClipboardMode treeClipboardMode = TreeClipboardMode::None;
 
-    // Các hàm UI cho context menu (dùng FileManager bên trong)
     void handleNewFile(const QModelIndex &index);
     void handleNewFolder(const QModelIndex &index);
     void handleRename(const QModelIndex &index);
@@ -68,11 +70,6 @@ private:
     void handleCutPath(const QModelIndex &index);
     void handlePastePath(const QModelIndex &index);
     QString targetDirectoryForIndex(const QModelIndex &index) const;
-    bool performTreeOperation(const QString &sourcePath, const QString &targetDirPath, bool moveOperation, QString *outResultPath = nullptr);
-    bool hasTreeClipboardPath() const;
-    void clearTreeClipboard();
-    void syncTreeClipboardAfterRename(const QString &oldPath, const QString &newPath);
-    void clearTreeClipboardIfAffected(const QString &path);
 };
 
 #endif // MAINWINDOW_H

@@ -1,4 +1,4 @@
-#include "settingsmanager.h"
+#include "jsonconfigstore.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -30,18 +30,33 @@ QJsonObject settingsToJsonObject(const AppSettings &settings)
 }
 }
 
-SettingsManager::SettingsManager(QObject *parent)
-    : QObject(parent)
+AppSettings JsonConfigStore::load()
 {
-    load();
+    AppSettings defaults = loadDefaults();
+    AppSettings loaded = readSettingsFile(settingsFilePath(), defaults);
+
+    QDir rootDir(settingsRootPath());
+    rootDir.mkpath("data");
+
+    QFile settingsFile(settingsFilePath());
+    if (!settingsFile.exists()) {
+        writeSettingsFile(settingsFilePath(), loaded);
+    }
+
+    return loaded;
 }
 
-const AppSettings &SettingsManager::settings() const
+bool JsonConfigStore::save(const AppSettings &settings)
 {
-    return currentSettings;
+    return writeSettingsFile(settingsFilePath(), settings);
 }
 
-QString SettingsManager::settingsRootPath() const
+AppSettings JsonConfigStore::loadDefaults()
+{
+    return readSettingsFile(defaultsFilePath(), AppSettings());
+}
+
+QString JsonConfigStore::settingsRootPath() const
 {
     const QString appConfigRoot = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
     if (!appConfigRoot.isEmpty()) {
@@ -51,47 +66,17 @@ QString SettingsManager::settingsRootPath() const
     return QDir(QCoreApplication::applicationDirPath()).filePath("settings");
 }
 
-QString SettingsManager::settingsFilePath() const
+QString JsonConfigStore::settingsFilePath() const
 {
     return QDir(settingsRootPath()).filePath("data/app-settings.json");
 }
 
-QString SettingsManager::defaultsFilePath() const
+QString JsonConfigStore::defaultsFilePath() const
 {
     return QStringLiteral(":/settings/default-settings.json");
 }
 
-bool SettingsManager::applySettings(const AppSettings &newSettings)
-{
-    if (!writeSettingsFile(settingsFilePath(), newSettings)) {
-        return false;
-    }
-
-    currentSettings = newSettings;
-    emit settingsChanged();
-    return true;
-}
-
-bool SettingsManager::resetToDefaults()
-{
-    return applySettings(defaultSettings);
-}
-
-void SettingsManager::load()
-{
-    defaultSettings = readSettingsFile(defaultsFilePath(), AppSettings());
-    currentSettings = readSettingsFile(settingsFilePath(), defaultSettings);
-
-    QDir rootDir(settingsRootPath());
-    rootDir.mkpath("data");
-
-    QFile settingsFile(settingsFilePath());
-    if (!settingsFile.exists()) {
-        writeSettingsFile(settingsFilePath(), currentSettings);
-    }
-}
-
-AppSettings SettingsManager::readSettingsFile(const QString &filePath, const AppSettings &fallback) const
+AppSettings JsonConfigStore::readSettingsFile(const QString &filePath, const AppSettings &fallback) const
 {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -108,7 +93,7 @@ AppSettings SettingsManager::readSettingsFile(const QString &filePath, const App
     return settingsFromJsonObject(document.object(), fallback);
 }
 
-bool SettingsManager::writeSettingsFile(const QString &filePath, const AppSettings &settings) const
+bool JsonConfigStore::writeSettingsFile(const QString &filePath, const AppSettings &settings) const
 {
     QFileInfo info(filePath);
     QDir().mkpath(info.absolutePath());

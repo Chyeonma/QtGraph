@@ -15,19 +15,28 @@ set(SOURCES
     src/main.cpp
     resources/app.qrc
 
-    # Core
-    src/core/filemanager.cpp
-    src/core/fonts/fontmanager.cpp
+    # App
+    src/app/appcontext.cpp
 
-    # Settings
-    src/settings/settingsmanager.cpp
-    src/settings/settingstab.cpp
+    # Core
+    src/core/utils/fileio.cpp
+    src/core/fonts/fontprovider.cpp
+    src/core/utils/pathutils.cpp
+    src/core/config/jsonconfigstore.cpp
+
+    # Services
+    src/services/settingsservice.cpp
+    src/services/projectservice.cpp
+    src/services/fileservice.cpp
+    src/services/editorservice.cpp
+    src/services/pluginmanager.cpp
 
     # Editor view
     src/editor/view/codeviewer.cpp
 
     # UI
     src/ui/mainwindow/mainwindow.cpp
+    src/ui/settings/settingstab.cpp
     src/ui/tabs/tabmanager.cpp
     src/ui/tree/projecttreeview.cpp
     src/ui/canvas/canvasview.cpp
@@ -35,7 +44,7 @@ set(SOURCES
 
     # Syntax highlighting core
     src/editor/syntax/base/syntaxhighlighter.cpp
-    src/editor/syntax/highlighterfactory.cpp
+    src/editor/syntax/highlighterregistry.cpp
 
     # Syntax highlighting languages
     src/editor/syntax/languages/cpp/cpphighlighter.cpp
@@ -48,20 +57,42 @@ set(SOURCES
     src/editor/syntax/languages/json/jsonhighlighter.cpp
 )
 set(HEADERS
-    # Core
-    src/core/filemanager.h
-    src/core/fonts/fontmanager.h
+    # App
+    src/app/appcontext.h
 
-    # Settings
-    src/settings/appsettings.h
-    src/settings/settingsmanager.h
-    src/settings/settingstab.h
+    # Core
+    src/core/utils/fileio.h
+    src/core/fonts/fontprovider.h
+    src/core/utils/pathutils.h
+    src/core/config/jsonconfigstore.h
+
+    # Interfaces
+    src/interfaces/ifileio.h
+    src/interfaces/iconfigstore.h
+    src/interfaces/ifontprovider.h
+    src/interfaces/ihighlighterfactory.h
+    src/interfaces/iplugin.h
+
+    # Models
+    src/models/appsettings.h
+    src/models/fileclipboard.h
+    src/models/openfileresult.h
+    src/models/plugininfo.h
+
+    # Services
+    src/services/settingsservice.h
+    src/services/projectservice.h
+    src/services/fileservice.h
+    src/services/editorservice.h
+    src/services/pluginmanager.h
+    src/plugins/sdk/pluginsdk.h
 
     # Editor view
     src/editor/view/codeviewer.h
 
     # UI
     src/ui/mainwindow/mainwindow.h
+    src/ui/settings/settingstab.h
     src/ui/tabs/tabmanager.h
     src/ui/tree/projecttreeview.h
     src/ui/canvas/canvasview.h
@@ -69,7 +100,7 @@ set(HEADERS
 
     # Syntax highlighting core
     src/editor/syntax/base/syntaxhighlighter.h
-    src/editor/syntax/highlighterfactory.h
+    src/editor/syntax/highlighterregistry.h
 
     # Syntax highlighting languages
     src/editor/syntax/languages/cpp/cpphighlighter.h

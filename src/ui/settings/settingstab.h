@@ -1,9 +1,10 @@
 #ifndef SETTINGSTAB_H
 #define SETTINGSTAB_H
 
-#include "settingsmanager.h"
+#include "services/settingsservice.h"
 #include <QWidget>
 
+class IFontProvider;
 class QLabel;
 class QComboBox;
 class QSpinBox;
@@ -15,14 +16,15 @@ class SettingsTab : public QWidget
     Q_OBJECT
 
 public:
-    explicit SettingsTab(SettingsManager *settingsManager, QWidget *parent = nullptr);
+    explicit SettingsTab(IFontProvider *fontProvider, SettingsService *settingsService, QWidget *parent = nullptr);
 
 private slots:
     void saveSettings();
     void loadSettingsIntoForm();
 
 private:
-    SettingsManager *settingsManager;
+    IFontProvider *fontProvider;
+    SettingsService *settingsService;
     QLabel *settingsPathLabel;
     QLabel *statusLabel;
     QComboBox *uiFontCombo;

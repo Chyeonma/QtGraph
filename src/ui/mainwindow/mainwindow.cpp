@@ -1,12 +1,17 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
-#include "core/fonts/fontmanager.h"
+#include "interfaces/ifontprovider.h"
+#include "interfaces/ihighlighterfactory.h"
+#include "app/appcontext.h"
+#include "services/projectservice.h"
+#include "services/fileservice.h"
+#include "services/editorservice.h"
+#include "core/utils/pathutils.h"
 #include "ui/tabs/tabmanager.h"
 #include "ui/tree/projecttreeview.h"
 #include "ui/canvas/canvasview.h"
 #include "ui/welcome/welcometab.h"
-#include "core/filemanager.h"
-#include "settings/settingsmanager.h"
+#include "services/settingsservice.h"
 #include <QApplication>
 #include <QFileDialog>
 #include <QKeySequence>
@@ -21,56 +26,18 @@ QString actionVerb(bool moveOperation)
 {
     return moveOperation ? "move" : "copy";
 }
-
-Qt::CaseSensitivity pathCaseSensitivity()
-{
-#ifdef Q_OS_WIN
-    return Qt::CaseInsensitive;
-#else
-    return Qt::CaseSensitive;
-#endif
 }
 
-QString cleanPath(const QString &path)
-{
-    return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-}
-
-bool isSamePath(const QString &left, const QString &right)
-{
-    return QString::compare(cleanPath(left), cleanPath(right), pathCaseSensitivity()) == 0;
-}
-
-bool isSameOrChildPath(const QString &candidatePath, const QString &rootPath)
-{
-    const QString candidate = cleanPath(candidatePath);
-    const QString root = cleanPath(rootPath);
-
-    if (isSamePath(candidate, root)) {
-        return true;
-    }
-
-    return candidate.startsWith(root + QDir::separator(), pathCaseSensitivity());
-}
-
-QString remapPathAfterRename(const QString &originalPath, const QString &oldRootPath, const QString &newRootPath)
-{
-    const QString original = cleanPath(originalPath);
-    const QString oldRoot = cleanPath(oldRootPath);
-    const QString newRoot = cleanPath(newRootPath);
-
-    if (isSamePath(original, oldRoot)) {
-        return newRoot;
-    }
-
-    return cleanPath(newRoot + original.mid(oldRoot.size()));
-}
-}
-
-MainWindow::MainWindow(SettingsManager *settingsManager, QWidget *parent)
+MainWindow::MainWindow(AppContext *context, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
-    , settingsManager(settingsManager)
+    , appContext(context)
+    , projectService(context->projectService())
+    , fileService(context->fileService())
+    , editorService(context->editorService())
+    , fontProvider(context->fontProvider())
+    , highlighterFactory(context->highlighterFactory())
+    , settingsService(context->settingsService())
 {
     ui->setupUi(this);
 
@@ -78,7 +45,7 @@ MainWindow::MainWindow(SettingsManager *settingsManager, QWidget *parent)
     // 1. KHỞI TẠO CÁC MODULE
     // ==========================================
 
-    tabManager = new TabManager(ui->tabWidget, settingsManager, this);
+    tabManager = new TabManager(ui->tabWidget, appContext, this);
 
     fileModel = new QFileSystemModel(this);
     ui->treeView->setModel(fileModel);
@@ -109,7 +76,7 @@ MainWindow::MainWindow(SettingsManager *settingsManager, QWidget *parent)
     connect(ui->actionCopy, &QAction::triggered, this, &MainWindow::onCopyTriggered);
     connect(ui->actionPaste, &QAction::triggered, this, &MainWindow::onPasteTriggered);
     connect(ui->actionSelect_All, &QAction::triggered, this, &MainWindow::onSelectAllTriggered);
-    connect(settingsManager, &SettingsManager::settingsChanged, this, &MainWindow::applyUiSettings);
+    connect(settingsService, &SettingsService::settingsChanged, this, &MainWindow::applyUiSettings);
 
     ui->actionSave->setShortcut(QKeySequence::Save);
     ui->actionSave_All->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
@@ -125,6 +92,23 @@ MainWindow::MainWindow(SettingsManager *settingsManager, QWidget *parent)
     ui->treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(ui->treeView, &QWidget::customContextMenuRequested, this, &MainWindow::onCustomContextMenuRequested);
     connect(ui->treeView, &ProjectTreeView::pathsDropped, this, &MainWindow::onTreePathsDropped);
+    
+    // Services Connects
+    connect(projectService, &ProjectService::projectOpened, this, [this](const QString &path) {
+        QModelIndex index = fileModel->setRootPath(path);
+        ui->treeView->setRootIndex(index);
+        ui->treeView->setProjectRootPath(path);
+        ui->treeView->show();
+        ui->splitter->setSizes({250, 800});
+    });
+    
+    connect(fileService, &FileService::clipboardChanged, this, [this]() {
+        if (this->fileService->clipboard().mode == FileClipboard::Cut) {
+            ui->treeView->setCutPath(this->fileService->clipboard().path);
+        } else {
+            ui->treeView->clearCutPath();
+        }
+    });
 
     applyUiSettings();
 
@@ -146,20 +130,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 }
 
-// ==========================================
-// SLOTS: MENU & TOOLBAR
-// ==========================================
-
 void MainWindow::onOpenFolderTriggered()
 {
     QString folderPath = QFileDialog::getExistingDirectory(this, "Chọn thư mục dự án", QDir::homePath());
 
     if (!folderPath.isEmpty()) {
-        QModelIndex index = fileModel->setRootPath(folderPath);
-        ui->treeView->setRootIndex(index);
-        ui->treeView->setProjectRootPath(folderPath);
-        ui->treeView->show();
-        ui->splitter->setSizes({250, 800});
+        projectService->openProject(folderPath);
     }
 }
 
@@ -183,7 +159,7 @@ void MainWindow::onSaveAllTriggered()
 
 void MainWindow::onCanvasViewTriggered()
 {
-    QString currentFolder = fileModel->rootPath();
+    QString currentFolder = projectService->currentRootPath();
     if (currentFolder.isEmpty()) {
         QMessageBox::information(this, "Thông báo", "Vui lòng mở một dự án (Open Folder) trước khi bật Canvas.");
         return;
@@ -252,15 +228,11 @@ void MainWindow::onTreeViewDoubleClicked(const QModelIndex &index)
     tabManager->openFile(filePath, fileName);
 }
 
-// ==========================================
-// SLOTS: CONTEXT MENU & PHÍM TẮT
-// ==========================================
-
 void MainWindow::onCustomContextMenuRequested(const QPoint &pos)
 {
     QModelIndex index = ui->treeView->indexAt(pos);
     QMenu contextMenu(this);
-    const bool canPaste = hasTreeClipboardPath();
+    const bool canPaste = fileService->clipboard().hasContent();
 
     if (!index.isValid()) {
         QAction *actionNewFile = contextMenu.addAction("New File (Root)...");
@@ -319,8 +291,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 
 void MainWindow::applyUiSettings()
 {
-    const AppSettings &current = settingsManager->settings();
-    qApp->setFont(FontManager::uiFont(current.uiFontFamily, current.uiFontSize));
+    const AppSettings &current = settingsService->settings();
+    qApp->setFont(fontProvider->uiFont(current.uiFontFamily, current.uiFontSize));
 }
 
 void MainWindow::onTreePathsDropped(const QStringList &sourcePaths, const QString &targetDirPath, Qt::DropAction dropAction)
@@ -331,8 +303,11 @@ void MainWindow::onTreePathsDropped(const QStringList &sourcePaths, const QStrin
 
     for (const QString &sourcePath : sourcePaths) {
         QString resultPath;
-        if (performTreeOperation(sourcePath, targetDirPath, moveOperation, &resultPath)) {
+        if (fileService->moveOrCopyPath(sourcePath, targetDirPath, moveOperation, &resultPath)) {
             ++successCount;
+            if (moveOperation) {
+                tabManager->handlePathRenamed(sourcePath, resultPath);
+            }
         } else {
             failedNames.append(QFileInfo(sourcePath).fileName());
         }
@@ -354,20 +329,16 @@ void MainWindow::onTreePathsDropped(const QStringList &sourcePaths, const QStrin
     }
 }
 
-// ==========================================
-// HELPER: GỌI FILEMANAGER + HIỂN THỊ KẾT QUẢ
-// ==========================================
-
 void MainWindow::handleNewFile(const QModelIndex &index) {
     QString dirPath = index.isValid() ?
                       (fileModel->isDir(index) ? fileModel->filePath(index) : QFileInfo(fileModel->filePath(index)).absolutePath()) :
-                      fileModel->rootPath();
+                      projectService->currentRootPath();
     if (dirPath.isEmpty()) return;
 
     bool ok;
     QString fileName = QInputDialog::getText(this, "New File", "Enter file name:", QLineEdit::Normal, "", &ok);
     if (ok && !fileName.isEmpty()) {
-        if (!FileManager::createFile(dirPath, fileName)) {
+        if (!fileService->createNewFile(dirPath, fileName)) {
             QMessageBox::warning(this, "Lỗi", "Không thể tạo file. Hãy kiểm tra quyền truy cập!");
         }
     }
@@ -376,13 +347,13 @@ void MainWindow::handleNewFile(const QModelIndex &index) {
 void MainWindow::handleNewFolder(const QModelIndex &index) {
     QString dirPath = index.isValid() ?
                       (fileModel->isDir(index) ? fileModel->filePath(index) : QFileInfo(fileModel->filePath(index)).absolutePath()) :
-                      fileModel->rootPath();
+                      projectService->currentRootPath();
     if (dirPath.isEmpty()) return;
 
     bool ok;
     QString folderName = QInputDialog::getText(this, "New Folder", "Enter folder name:", QLineEdit::Normal, "", &ok);
     if (ok && !folderName.isEmpty()) {
-        FileManager::createFolder(dirPath, folderName);
+        fileService->createNewFolder(dirPath, folderName);
     }
 }
 
@@ -394,12 +365,11 @@ void MainWindow::handleRename(const QModelIndex &index) {
     QString newName = QInputDialog::getText(this, "Rename", "Enter new name:", QLineEdit::Normal, currentName, &ok);
     if (ok && !newName.isEmpty() && newName != currentName) {
         const QString newPath = QDir(QFileInfo(path).absolutePath()).filePath(newName);
-        if (!FileManager::rename(path, newName)) {
+        if (!fileService->renamePath(path, newName)) {
             QMessageBox::warning(this, "Lỗi", "Không thể đổi tên. File có thể đang được sử dụng.");
             return;
         }
 
-        syncTreeClipboardAfterRename(path, newPath);
         tabManager->handlePathRenamed(path, newPath);
     }
 }
@@ -415,62 +385,55 @@ void MainWindow::handleDelete(const QModelIndex &index) {
             return;
         }
 
-        if (!FileManager::remove(path)) {
+        if (!fileService->deletePath(path)) {
             QMessageBox::warning(this, "Lỗi", "Không thể xóa mục đã chọn.");
             return;
         }
 
-        clearTreeClipboardIfAffected(path);
         tabManager->handlePathRemoved(path);
     }
 }
 
 void MainWindow::handleCopyPath(const QModelIndex &index)
 {
-    if (!index.isValid()) {
-        return;
-    }
-
-    treeClipboardPath = fileModel->filePath(index);
-    treeClipboardMode = TreeClipboardMode::Copy;
-    ui->treeView->clearCutPath();
-    ui->statusbar->showMessage("Copied: " + QFileInfo(treeClipboardPath).fileName(), 3000);
+    if (!index.isValid()) return;
+    QString path = fileModel->filePath(index);
+    fileService->setClipboard(path, FileClipboard::Copy);
+    ui->statusbar->showMessage("Copied: " + QFileInfo(path).fileName(), 3000);
 }
 
 void MainWindow::handleCutPath(const QModelIndex &index)
 {
-    if (!index.isValid()) {
-        return;
-    }
-
-    treeClipboardPath = fileModel->filePath(index);
-    treeClipboardMode = TreeClipboardMode::Cut;
-    ui->treeView->setCutPath(treeClipboardPath);
-    ui->statusbar->showMessage("Cut: " + QFileInfo(treeClipboardPath).fileName(), 3000);
+    if (!index.isValid()) return;
+    QString path = fileModel->filePath(index);
+    fileService->setClipboard(path, FileClipboard::Cut);
+    ui->statusbar->showMessage("Cut: " + QFileInfo(path).fileName(), 3000);
 }
 
 void MainWindow::handlePastePath(const QModelIndex &index)
 {
-    if (!hasTreeClipboardPath()) {
+    if (!fileService->clipboard().hasContent()) {
         ui->statusbar->showMessage("No copied or cut file or folder.", 3000);
         return;
     }
 
-    if (!QFileInfo(treeClipboardPath).exists()) {
-        clearTreeClipboard();
+    if (!QFileInfo(fileService->clipboard().path).exists()) {
+        fileService->clearClipboard();
         ui->statusbar->showMessage("The stored file or folder no longer exists.", 3000);
         return;
     }
 
-    const bool moveOperation = treeClipboardMode == TreeClipboardMode::Cut;
+    const bool moveOperation = fileService->clipboard().mode == FileClipboard::Cut;
     QString resultPath;
-    if (!performTreeOperation(treeClipboardPath, targetDirectoryForIndex(index), moveOperation, &resultPath)) {
+    QString sourcePath = fileService->clipboard().path;
+    
+    if (!fileService->pasteClipboard(targetDirectoryForIndex(index), &resultPath)) {
         QMessageBox::warning(this, "Paste Failed", "Could not paste the selected file or folder here.");
         return;
     }
 
     if (moveOperation) {
-        clearTreeClipboard();
+        tabManager->handlePathRenamed(sourcePath, resultPath);
         ui->statusbar->showMessage("Moved: " + QFileInfo(resultPath).fileName(), 3000);
         return;
     }
@@ -481,7 +444,7 @@ void MainWindow::handlePastePath(const QModelIndex &index)
 QString MainWindow::targetDirectoryForIndex(const QModelIndex &index) const
 {
     if (!index.isValid()) {
-        return fileModel->rootPath();
+        return projectService->currentRootPath();
     }
 
     if (fileModel->isDir(index)) {
@@ -489,69 +452,4 @@ QString MainWindow::targetDirectoryForIndex(const QModelIndex &index) const
     }
 
     return QFileInfo(fileModel->filePath(index)).absolutePath();
-}
-
-bool MainWindow::performTreeOperation(const QString &sourcePath, const QString &targetDirPath, bool moveOperation, QString *outResultPath)
-{
-    if (sourcePath.isEmpty() || targetDirPath.isEmpty()) {
-        return false;
-    }
-
-    const QFileInfo sourceInfo(sourcePath);
-    if (!sourceInfo.exists()) {
-        return false;
-    }
-
-    if (moveOperation && QFileInfo(sourcePath).absolutePath() == QDir(targetDirPath).absolutePath()) {
-        return true;
-    }
-
-    QString resultPath;
-    const bool ok = moveOperation
-        ? FileManager::movePath(sourcePath, targetDirPath, &resultPath)
-        : FileManager::copyPath(sourcePath, targetDirPath, &resultPath);
-
-    if (!ok) {
-        return false;
-    }
-
-    if (moveOperation) {
-        tabManager->handlePathRenamed(sourcePath, resultPath);
-    }
-
-    if (outResultPath) {
-        *outResultPath = resultPath;
-    }
-    return true;
-}
-
-bool MainWindow::hasTreeClipboardPath() const
-{
-    return treeClipboardMode != TreeClipboardMode::None && !treeClipboardPath.isEmpty();
-}
-
-void MainWindow::clearTreeClipboard()
-{
-    treeClipboardPath.clear();
-    treeClipboardMode = TreeClipboardMode::None;
-    ui->treeView->clearCutPath();
-}
-
-void MainWindow::syncTreeClipboardAfterRename(const QString &oldPath, const QString &newPath)
-{
-    if (!hasTreeClipboardPath() || !isSameOrChildPath(treeClipboardPath, oldPath)) {
-        return;
-    }
-
-    treeClipboardPath = remapPathAfterRename(treeClipboardPath, oldPath, newPath);
-    if (treeClipboardMode == TreeClipboardMode::Cut) {
-        ui->treeView->setCutPath(treeClipboardPath);
-    }
-}
-
-void MainWindow::clearTreeClipboardIfAffected(const QString &path)
-{
-    if (hasTreeClipboardPath() && isSameOrChildPath(treeClipboardPath, path)) {
-        clearTreeClipboard();
-    }
 }

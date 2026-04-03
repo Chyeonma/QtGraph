@@ -1,5 +1,5 @@
 #include "settingstab.h"
-#include "core/fonts/fontmanager.h"
+#include "interfaces/ifontprovider.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -11,9 +11,10 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-SettingsTab::SettingsTab(SettingsManager *settingsManager, QWidget *parent)
+SettingsTab::SettingsTab(IFontProvider *fontProvider, SettingsService *settingsService, QWidget *parent)
     : QWidget(parent)
-    , settingsManager(settingsManager)
+    , fontProvider(fontProvider)
+    , settingsService(settingsService)
 {
     setStyleSheet(
         "QWidget { background: #1e1e1e; color: #d4d4d4; }"
@@ -38,7 +39,7 @@ SettingsTab::SettingsTab(SettingsManager *settingsManager, QWidget *parent)
     descriptionLabel->setWordWrap(true);
     descriptionLabel->setStyleSheet("color: #a8a8a8;");
 
-    settingsPathLabel = new QLabel("Settings file: " + settingsManager->settingsFilePath());
+    settingsPathLabel = new QLabel("Settings file: " + settingsService->settingsFilePath());
     settingsPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     settingsPathLabel->setStyleSheet("color: #7fba7a;");
 
@@ -49,7 +50,7 @@ SettingsTab::SettingsTab(SettingsManager *settingsManager, QWidget *parent)
     fontLayout->setHorizontalSpacing(16);
     fontLayout->setVerticalSpacing(12);
 
-    const QStringList fontFamilies = FontManager::availableFontFamilies();
+    const QStringList fontFamilies = fontProvider->availableFontFamilies();
 
     uiFontCombo = new QComboBox();
     uiFontCombo->addItems(fontFamilies);
@@ -101,8 +102,8 @@ SettingsTab::SettingsTab(SettingsManager *settingsManager, QWidget *parent)
     mainLayout->addStretch();
 
     connect(saveButton, &QPushButton::clicked, this, &SettingsTab::saveSettings);
-    connect(resetButton, &QPushButton::clicked, settingsManager, &SettingsManager::resetToDefaults);
-    connect(settingsManager, &SettingsManager::settingsChanged, this, &SettingsTab::loadSettingsIntoForm);
+    connect(resetButton, &QPushButton::clicked, settingsService, &SettingsService::resetToDefaults);
+    connect(settingsService, &SettingsService::settingsChanged, this, &SettingsTab::loadSettingsIntoForm);
 
     loadSettingsIntoForm();
 }
@@ -116,7 +117,7 @@ void SettingsTab::saveSettings()
     newSettings.editorFontSize = editorFontSizeSpinBox->value();
     newSettings.defaultShowLineNumbers = defaultLineNumbersCheckBox->isChecked();
 
-    if (settingsManager->applySettings(newSettings)) {
+    if (settingsService->applySettings(newSettings)) {
         statusLabel->setText("Da luu setting thanh cong.");
     } else {
         statusLabel->setText("Khong the luu file setting.");
@@ -125,7 +126,7 @@ void SettingsTab::saveSettings()
 
 void SettingsTab::loadSettingsIntoForm()
 {
-    const AppSettings &current = settingsManager->settings();
+    const AppSettings &current = settingsService->settings();
 
     uiFontCombo->setCurrentText(current.uiFontFamily);
     uiFontSizeSpinBox->setValue(current.uiFontSize);
