@@ -1,0 +1,6 @@
+build/
+dist/
+.codex
+CMakeLists.txt.user
+src/ui/mainwindow/*.autosave.ui
+settings/data/*.json

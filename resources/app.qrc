@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>fonts/source-sans-3/SourceSans3-Regular.ttf</file>
+        <file>fonts/source-sans-3/SourceSans3-Bold.ttf</file>
+        <file>fonts/source-code-pro/SourceCodePro-Regular.ttf</file>
+        <file>fonts/jetbrains-mono/JetBrainsMono-Regular.ttf</file>
+        <file>fonts/ubuntu-sans/UbuntuSans-Regular.otf</file>
+        <file>fonts/ubuntu-sans/UbuntuSans-Bold.otf</file>
+        <file>fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf</file>
+        <file>fonts/ibm-plex-sans/IBMPlexSans-Bold.ttf</file>
+        <file alias="settings/default-settings.json">../settings/defaults/default-settings.json</file>
+    </qresource>
+</RCC>
